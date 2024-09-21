@@ -1,0 +1,19 @@
+name: 'Gomplate Templating Action'
+description: 'Render templates using gomplate with input values.'
+inputs:
+  template:
+    description: 'The path to the gomplate template file.'
+    required: true
+  output:
+    description: 'The path to save the rendered template.'
+    required: true
+  values:
+    description: 'Additional values to pass into gomplate (optional).'
+    required: false
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.template }}
+    - ${{ inputs.output }}
+    - ${{ inputs.values }}
