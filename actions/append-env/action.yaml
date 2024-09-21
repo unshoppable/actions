@@ -1,0 +1,17 @@
+name: "Append Environment Variables from JSON"
+description: "A GitHub Action that appends variables from a JSON file to /etc/environment."
+author: "Your Name"
+inputs:
+  filename:
+    description: "The JSON file with environment variables."
+    required: true
+  prefix:
+    description: "Prefix for the variables."
+    required: false
+  masked:
+    description: "Mask the environment variables."
+    required: false
+    default: 'false'
+runs:
+  using: "node16"
+  main: "index.js"

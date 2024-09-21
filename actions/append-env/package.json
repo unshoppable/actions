@@ -1,0 +1,10 @@
+{
+  "name": "append-env",
+  "version": "1.0.0",
+  "description": "A GitHub Action that appends variables from a JSON file to /etc/environment.",
+  "main": "index.js",
+  "dependencies": {
+    "@actions/core": "^1.2.6",
+    "@actions/github": "^4.0.0"
+  }
+}

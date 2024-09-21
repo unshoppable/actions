@@ -1,0 +1,38 @@
+name: Merge Action
+
+description: Merge two branches
+
+inputs:
+  baseBranch:
+    description: Merge into branch
+    required: true
+  fromBranch:
+    description: Merge this branch into baseBranch
+    required: true
+  mergeTheirs:
+    description: Use their changes
+    default: 'false'
+  fetchTags:
+    description: Fetch tags before merge
+    default: 'true'
+  push:
+    description: Push the merge to origin
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    # Error on conflicts if mergeTheirs is false
+    - name: Merge branches ${{ inputs.fromBranch }} into ${{ inputs.baseBranch }} (force)
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      shell: bash
+      run: |
+        if [ ${{ inputs.fetchTags }} = 'true' ]; then git fetch --all --tags; fi && \
+        if [ ${{ inputs.fetchTags }} = 'false' ]; then git fetch --all; fi && \
+        git checkout ${{ inputs.baseBranch }} --force && git pull && \
+        if [ ${{ inputs.mergeTheirs }} = 'true' ]; then git merge -X theirs origin/${{ inputs.fromBranch }} --no-verify; fi && \
+        if [ ${{ inputs.mergeTheirs }} = 'false' ]; then git merge origin/${{ inputs.fromBranch }} --no-verify; fi && \
+        if [ ${{ inputs.push }} = 'true' ]; then git push origin ${{ inputs.baseBranch }} --force --no-verify && echo "Pushed to ${{ inputs.baseBranch }}"; fi && \
+        git status
