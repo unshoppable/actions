@@ -1,0 +1,25 @@
+name: 'Checkout and run npm install'
+
+description: 'This action checks out the commit, sets up Node and installs deps using npm.'
+
+inputs:
+  fetch-depth:
+    required: false
+    description: 'Number of commits to fetch during checkout. 0 indicates all history for all branches and tags.'
+    default: '0'
+  node_version:
+    required: false
+    description: 'Node version'
+    default: '20'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: NODE_ENV=development npm i --legacy-peer-deps
