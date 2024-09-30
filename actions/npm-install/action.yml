@@ -22,4 +22,4 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      run: NODE_ENV=development npm i --legacy-peer-deps
+      run: NODE_ENV=development npm i --legacy-peer-deps --include=dev --audit=false
