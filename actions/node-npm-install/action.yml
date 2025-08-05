@@ -17,5 +17,6 @@ runs:
           ${{ runner.os }}-modules-
 
     - name: Install dependencies
+      if: steps.cache-modules.outputs.cache-hit != 'true'
       shell: bash
       run: NODE_ENV=development npm ci --include=dev --audit=false
