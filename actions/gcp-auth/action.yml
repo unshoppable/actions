@@ -7,6 +7,13 @@ inputs:
   service_account:
     description: 'Service account email'
     required: true
+  credentials_file_path:
+    description: 'Path to store the Google Application Credentials file'
+    required: false
+    default: 'tmp/gcloud_credentials.json'
+  google_application_credentials_path:
+    description: 'Path to the Google Application Credentials file'
+    required: true
 
 runs:
   using: 'composite'
@@ -21,7 +28,7 @@ runs:
       shell: bash
       run: |
         gcloud auth activate-service-account ${{ inputs.service_account }} \
-          --key-file=$GOOGLE_APPLICATION_CREDENTIALS
+          --key-file=${{ inputs.google_application_credentials_path }}
 
     - name: Verify gcloud authentication and setup credentials file
       shell: bash
@@ -30,10 +37,10 @@ runs:
         gcloud auth list
         gcloud config list
 
-        echo "GCLOUD_CREDENTIALS_FILE_PATH=tmp/gcloud_credentials.json" >> $GITHUB_ENV
+        echo "GCLOUD_CREDENTIALS_FILE_PATH=${{ inputs.credentials_file_path }}" >> $GITHUB_ENV
 
-        mkdir -p tmp
-        cp $GOOGLE_APPLICATION_CREDENTIALS tmp/gcloud_credentials.json
+        mkdir -p $(dirname "${{ inputs.credentials_file_path }}")
+        cp ${{ inputs.google_application_credentials_path }} ${{ inputs.credentials_file_path }}
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
