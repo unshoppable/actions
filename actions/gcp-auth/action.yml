@@ -1,0 +1,39 @@
+name: 'GCP Authentication'
+description: 'Authenticate with Google Cloud Platform and set up service account'
+inputs:
+  gcp_credentials:
+    description: 'GCP credentials JSON'
+    required: true
+  service_account:
+    description: 'Service account email'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ inputs.gcp_credentials }}
+
+    - name: Set active service account
+      shell: bash
+      run: |
+        gcloud auth activate-service-account ${{ inputs.service_account }} \
+          --key-file=$GOOGLE_APPLICATION_CREDENTIALS
+
+    - name: Verify gcloud authentication and setup credentials file
+      shell: bash
+      run: |
+        gcloud config set account ${{ inputs.service_account }}
+        gcloud auth list
+        gcloud config list
+
+        echo "GCLOUD_CREDENTIALS_FILE_PATH=tmp/gcloud_credentials.json" >> $GITHUB_ENV
+
+        mkdir -p tmp
+        cp $GOOGLE_APPLICATION_CREDENTIALS tmp/gcloud_credentials.json
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
