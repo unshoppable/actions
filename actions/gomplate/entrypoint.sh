@@ -94,6 +94,7 @@ echo "  OUTPUT: $OUTPUT"
 
 # Function to deep merge JSON objects
 # Later arguments override earlier ones
+# Note: Debug messages go to stderr so they don't pollute the JSON output
 merge_json() {
   if [ $# -eq 0 ]; then
     echo "{}"
@@ -105,18 +106,18 @@ merge_json() {
     if [ -n "$file_or_json" ]; then
       if [ -f "$file_or_json" ]; then
         # It's a file path
-        echo "Merging file: $file_or_json"
+        echo "Merging file: $file_or_json" >&2
         content=$(cat "$file_or_json")
       else
         # It's a JSON string
-        echo "Merging JSON string: $file_or_json"
+        echo "Merging JSON string: $file_or_json" >&2
         content="$file_or_json"
       fi
 
       # Validate JSON before merging
       if ! echo "$content" | jq empty 2>/dev/null; then
-        echo "ERROR: Invalid JSON content: $content"
-        echo "Skipping this input"
+        echo "ERROR: Invalid JSON content: $content" >&2
+        echo "Skipping this input" >&2
         continue
       fi
 
@@ -124,9 +125,9 @@ merge_json() {
       result=$(echo "$result" "$content" | jq -s '.[0] * .[1]')
 
       if [ $? -ne 0 ]; then
-        echo "ERROR: jq merge failed"
-        echo "Current result: $result"
-        echo "Content being merged: $content"
+        echo "ERROR: jq merge failed" >&2
+        echo "Current result: $result" >&2
+        echo "Content being merged: $content" >&2
       fi
     fi
   done
