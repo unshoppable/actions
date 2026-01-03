@@ -1,6 +1,6 @@
 FROM alpine:latest
 
-RUN apk add --no-cache curl \
+RUN apk add --no-cache curl jq gettext \
   && curl -Lo /usr/local/bin/gomplate https://github.com/hairyhenderson/gomplate/releases/download/v3.11.3/gomplate_linux-amd64-slim \
   && chmod +x /usr/local/bin/gomplate
 

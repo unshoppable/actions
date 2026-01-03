@@ -1,5 +1,5 @@
 name: 'Gomplate Templating Action'
-description: 'Render templates using gomplate with input values.'
+description: 'Render templates using gomplate with merged JSON config files.'
 inputs:
   template:
     description: 'The path to the gomplate template file.'
@@ -7,8 +7,17 @@ inputs:
   output:
     description: 'The path to save the rendered template.'
     required: true
+  config_base:
+    description: 'Path to base config JSON file.'
+    required: false
+  config_stage:
+    description: 'Path to stage-specific config JSON file (overrides base).'
+    required: false
+  extra_vars:
+    description: 'Additional variables as JSON string (overrides config files).'
+    required: false
   values:
-    description: 'Additional values to pass into gomplate (optional).'
+    description: 'Additional values to pass into gomplate as YAML (legacy, optional).'
     required: false
 runs:
   using: 'docker'
@@ -16,4 +25,7 @@ runs:
   args:
     - ${{ inputs.template }}
     - ${{ inputs.output }}
+    - ${{ inputs.config_base }}
+    - ${{ inputs.config_stage }}
+    - ${{ inputs.extra_vars }}
     - ${{ inputs.values }}
