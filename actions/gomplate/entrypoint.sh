@@ -217,32 +217,38 @@ if [ -n "$CONFIG_BASE" ] || [ -n "$CONFIG_STAGE" ] || [ -n "$EXTRA_VARS" ]; then
   echo "$MERGED" > /tmp/config.json
 
   # Generate CONTAINER_ENV YAML block from JSON
+  # Output is unindented; indentation is applied during template substitution
   CONTAINER_ENV_BLOCK=$(echo "$MERGED" | jq -r '
     if .CONTAINER_ENV then
-      .CONTAINER_ENV | to_entries | map("- name: " + .key + "\n              value: '\''" + (.value | tostring) + "'\''") | join("\n            ")
+      .CONTAINER_ENV | to_entries | map(
+        "- name: " + .key + "\n  value: \u0027" + (.value | tostring) + "\u0027"
+      ) | join("\n")
     else
       ""
     end
   ')
 
   # Preprocess template:
-  # 1. Replace {{ CONTAINER_ENV }} with the generated YAML block
-  # 2. Remove legacy .Env. prefix if present
-  # 3. Convert {{ KEY }} to {{ .KEY }} and {{- KEY }} to {{- .KEY }}
+  # 1. Remove legacy .Env. prefix if present
+  # 2. Convert {{ KEY }} to {{ .KEY }} and {{- KEY }} to {{- .KEY }}
   sed -E \
     -e 's/\.Env\.//g' \
     -e 's/\{\{- ([A-Z])/\{\{- .\1/g' \
     -e 's/\{\{ ([A-Z])/\{\{ .\1/g' \
     "$TEMPLATE" > /tmp/template.processed
 
-  # Replace CONTAINER_ENV placeholder (needs separate step due to multiline)
+  # Replace CONTAINER_ENV placeholder with proper indentation
   if [ -n "$CONTAINER_ENV_BLOCK" ]; then
-    # Create a temp file with the YAML content
     echo "$CONTAINER_ENV_BLOCK" > /tmp/container_env.yaml
-    # Use awk to replace the placeholder with file contents
+    # Detect indentation from placeholder line and apply to each inserted line
     awk '
       /# \{\{ \.CONTAINER_ENV \}\}/ {
-        while ((getline line < "/tmp/container_env.yaml") > 0) print line
+        match($0, /^[[:space:]]*/)
+        indent = substr($0, RSTART, RLENGTH)
+        while ((getline line < "/tmp/container_env.yaml") > 0) {
+          print indent line
+        }
+        close("/tmp/container_env.yaml")
         next
       }
       { print }
