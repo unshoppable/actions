@@ -1,4 +1,50 @@
 #!/bin/sh -l
+#
+# Gomplate Template Rendering Entrypoint
+# =======================================
+#
+# This script renders Go templates using gomplate with merged JSON configuration.
+#
+# PURPOSE:
+# Generate deployment YAML files (e.g., GCP Cloud Run service/job definitions)
+# by combining base configuration, stage-specific overrides, and runtime variables.
+#
+# FEATURES:
+# 1. JSON Config Merging - Merges multiple JSON config files with deep object merge:
+#    - Base config (e.g., variables.json) - common settings across all stages
+#    - Stage config (e.g., prod/variables.json) - stage-specific overrides
+#    - Extra vars (JSON string) - runtime values like IMAGE tag
+#
+# 2. Variable Interpolation - Resolves ${VAR} references within JSON values:
+#    - Example: "bucket-${STAGE}" becomes "bucket-prod" when STAGE=prod
+#    - Supports multiple passes for chained references
+#
+# 3. Template Preprocessing - Simplifies template syntax:
+#    - Converts {{ KEY }} to {{ .KEY }} (auto-adds dot prefix)
+#    - Removes legacy .Env. prefix if present
+#    - Expands # {{ CONTAINER_ENV }} placeholder to full env var YAML block
+#
+# 4. CONTAINER_ENV Expansion - Generates Cloud Run environment variable YAML:
+#    - Reads CONTAINER_ENV object from merged config
+#    - Outputs properly formatted YAML for GCP Cloud Run spec
+#
+# ARGUMENTS:
+#   $1 - TEMPLATE: Path to the gomplate template file
+#   $2 - OUTPUT: Path to save the rendered output
+#   $3 - CONFIG_BASE: Path to base JSON config file (optional)
+#   $4 - CONFIG_STAGE: Path to stage-specific JSON config file (optional)
+#   $5 - EXTRA_VARS: Additional variables as JSON string (optional)
+#   $6 - VALUES: Legacy YAML values for backwards compatibility (optional)
+#
+# USAGE (via GitHub Action):
+#   uses: unshoppable/actions/actions/gomplate@main
+#   with:
+#     template: .github/config/my-app/gcp.yaml
+#     output: deployment.yaml
+#     config_base: .github/config/my-app/variables.json
+#     config_stage: .github/config/my-app/prod/variables.json
+#     extra_vars: '{"STAGE": "prod", "IMAGE": "eu.gcr.io/project/app:tag"}'
+#
 
 TEMPLATE=$1
 OUTPUT=$2
@@ -6,6 +52,45 @@ CONFIG_BASE=$3
 CONFIG_STAGE=$4
 EXTRA_VARS=$5
 VALUES=$6
+
+# GitHub Actions mounts workspace at /github/workspace
+# Adjust paths if they're relative and we're in GitHub Actions
+adjust_path() {
+  local path="$1"
+  if [ -z "$path" ]; then
+    echo ""
+  elif [ -f "$path" ]; then
+    # Path exists as-is
+    echo "$path"
+  elif [ -n "$GITHUB_WORKSPACE" ] && [ -f "$GITHUB_WORKSPACE/$path" ]; then
+    # Try with GitHub workspace prefix
+    echo "$GITHUB_WORKSPACE/$path"
+  else
+    # Return original path (will fail later with clear error)
+    echo "$path"
+  fi
+}
+
+# Debug: show current directory and workspace info
+echo "Current directory: $(pwd)"
+echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+echo "ls of current directory:"
+ls -la | head -10
+
+TEMPLATE=$(adjust_path "$TEMPLATE")
+CONFIG_BASE=$(adjust_path "$CONFIG_BASE")
+CONFIG_STAGE=$(adjust_path "$CONFIG_STAGE")
+
+echo "Adjusted paths:"
+echo "  TEMPLATE: $TEMPLATE (exists: $([ -f "$TEMPLATE" ] && echo "yes" || echo "no"))"
+echo "  CONFIG_BASE: $CONFIG_BASE (exists: $([ -f "$CONFIG_BASE" ] && echo "yes" || echo "no"))"
+echo "  CONFIG_STAGE: $CONFIG_STAGE (exists: $([ -f "$CONFIG_STAGE" ] && echo "yes" || echo "no"))"
+
+# Adjust OUTPUT path for GitHub workspace
+if [ -n "$GITHUB_WORKSPACE" ] && [ ! -d "$(dirname "$OUTPUT")" ]; then
+  OUTPUT="$GITHUB_WORKSPACE/$OUTPUT"
+fi
+echo "  OUTPUT: $OUTPUT"
 
 # Function to deep merge JSON objects
 # Later arguments override earlier ones
@@ -20,27 +105,29 @@ merge_json() {
     if [ -n "$file_or_json" ]; then
       if [ -f "$file_or_json" ]; then
         # It's a file path
+        echo "Merging file: $file_or_json"
         content=$(cat "$file_or_json")
       else
         # It's a JSON string
+        echo "Merging JSON string: $file_or_json"
         content="$file_or_json"
       fi
-      # Deep merge using jq's * operator with recursive merge for objects
-      result=$(echo "$result" "$content" | jq -s '
-        def deepmerge(a; b):
-          if (a | type) == "object" and (b | type) == "object" then
-            a * b | to_entries | map(
-              if .value | type == "object" then
-                {key: .key, value: deepmerge(a[.key] // {}; b[.key] // {})}
-              else
-                .
-              end
-            ) | from_entries
-          else
-            b
-          end;
-        deepmerge(.[0]; .[1])
-      ')
+
+      # Validate JSON before merging
+      if ! echo "$content" | jq empty 2>/dev/null; then
+        echo "ERROR: Invalid JSON content: $content"
+        echo "Skipping this input"
+        continue
+      fi
+
+      # Deep merge using jq's * operator (which recursively merges objects)
+      result=$(echo "$result" "$content" | jq -s '.[0] * .[1]')
+
+      if [ $? -ne 0 ]; then
+        echo "ERROR: jq merge failed"
+        echo "Current result: $result"
+        echo "Content being merged: $content"
+      fi
     fi
   done
   echo "$result"
@@ -60,13 +147,16 @@ resolve_interpolations() {
       break
     fi
 
-    # Extract all top-level keys and their values, then use them for substitution
-    json=$(echo "$json" | jq -r '
+    # Extract all top-level keys with scalar values for substitution
+    # Skip objects and arrays as they can't be interpolated into strings
+    json=$(echo "$json" | jq '
+      # Build a lookup of only scalar (string/number/boolean) values
       . as $root |
+      ($root | to_entries | map(select(.value | type == "string" or type == "number" or type == "boolean")) | from_entries) as $scalars |
       def resolve_refs:
         if type == "string" then
           . as $str |
-          reduce ($root | to_entries[]) as $entry (
+          reduce ($scalars | to_entries[]) as $entry (
             $str;
             gsub("\\$\\{" + $entry.key + "\\}"; ($entry.value | tostring))
           )
@@ -87,6 +177,28 @@ resolve_interpolations() {
 # Build merged config
 if [ -n "$CONFIG_BASE" ] || [ -n "$CONFIG_STAGE" ] || [ -n "$EXTRA_VARS" ]; then
   echo "Building merged config..."
+  echo "CONFIG_BASE: $CONFIG_BASE"
+  echo "CONFIG_STAGE: $CONFIG_STAGE"
+  echo "EXTRA_VARS: $EXTRA_VARS"
+
+  # Check if config files exist
+  if [ -n "$CONFIG_BASE" ]; then
+    if [ -f "$CONFIG_BASE" ]; then
+      echo "CONFIG_BASE file exists, contents:"
+      cat "$CONFIG_BASE"
+    else
+      echo "WARNING: CONFIG_BASE file does not exist: $CONFIG_BASE"
+    fi
+  fi
+
+  if [ -n "$CONFIG_STAGE" ]; then
+    if [ -f "$CONFIG_STAGE" ]; then
+      echo "CONFIG_STAGE file exists, contents:"
+      cat "$CONFIG_STAGE"
+    else
+      echo "WARNING: CONFIG_STAGE file does not exist: $CONFIG_STAGE"
+    fi
+  fi
 
   # Merge configs: base < stage < extra_vars
   MERGED=$(merge_json "$CONFIG_BASE" "$CONFIG_STAGE" "$EXTRA_VARS")
