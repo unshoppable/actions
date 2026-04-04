@@ -5,11 +5,11 @@ description: "This action checks sets up Node and installs dependencies using np
 runs:
   using: "composite"
   steps:
-    - uses: volta-cli/action@v4
+    - uses: volta-cli/action@v5
 
     - name: Cache node modules
       id: cache-modules
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: node_modules
         key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json', 'patches/**') }}
