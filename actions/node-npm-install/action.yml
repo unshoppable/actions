@@ -19,4 +19,16 @@ runs:
     - name: Install dependencies
       if: steps.cache-modules.outputs.cache-hit != 'true'
       shell: bash
-      run: NODE_ENV=development npm ci --include=dev --audit=false
+      # Retry to absorb the transient esbuild postinstall race (ETXTBSY): esbuild
+      # writes its binary then immediately execs it to validate the version, which
+      # can fail under concurrent install scripts on CI runners. A retry succeeds
+      # because the binary is no longer busy on the next pass.
+      run: |
+        for attempt in 1 2 3; do
+          if NODE_ENV=development npm ci --include=dev --audit=false; then
+            exit 0
+          fi
+          echo "::warning::npm ci failed (attempt ${attempt}/3) — retrying in 5s"
+          sleep 5
+        done
+        exit 1
