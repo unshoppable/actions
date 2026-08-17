@@ -1,12 +1,27 @@
 name: 'GCP Authentication'
 description: 'Authenticate with Google Cloud Platform and set up service account'
 
+# Two authentication modes. Pass `workload_identity_provider` for projects in an organization that
+# forbids service account keys (iam.managed.disableServiceAccountKeyCreation); pass `gcp_credentials`
+# for projects that still carry a JSON key. Exactly one must be supplied.
+#
+# Workload Identity Federation additionally requires the calling job to declare:
+#   permissions:
+#     id-token: write
 inputs:
   gcp_credentials:
-    description: 'GCP credentials JSON'
-    required: true
+    description: 'GCP credentials JSON. Mutually exclusive with workload_identity_provider.'
+    required: false
+    default: ''
+  workload_identity_provider:
+    description: >-
+      Full resource name of the Workload Identity provider, e.g.
+      projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>.
+      Mutually exclusive with gcp_credentials.
+    required: false
+    default: ''
   service_account:
-    description: 'Service account email'
+    description: 'Service account email to impersonate / activate'
     required: true
   credentials_file_path:
     description: 'Path to store the Google Application Credentials file'
@@ -16,29 +31,60 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Authenticate to Google Cloud
-      id: auth
+    - name: Validate inputs
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.workload_identity_provider }}" && -n "${{ inputs.gcp_credentials }}" ]]; then
+          echo "::error::Pass either workload_identity_provider or gcp_credentials, not both."
+          exit 1
+        fi
+        if [[ -z "${{ inputs.workload_identity_provider }}" && -z "${{ inputs.gcp_credentials }}" ]]; then
+          echo "::error::One of workload_identity_provider or gcp_credentials is required."
+          exit 1
+        fi
+
+    - name: Authenticate to Google Cloud (Workload Identity Federation)
+      id: auth-wif
+      if: inputs.workload_identity_provider != ''
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ inputs.workload_identity_provider }}
+        service_account: ${{ inputs.service_account }}
+
+    - name: Authenticate to Google Cloud (service account key)
+      id: auth-key
+      if: inputs.gcp_credentials != ''
       uses: google-github-actions/auth@v2
       with:
         credentials_json: ${{ inputs.gcp_credentials }}
 
-    - name: Set active service account
-      shell: bash
-      run: |
-        gcloud auth activate-service-account ${{ inputs.service_account }} \
-          --key-file=${{ steps.auth.outputs.credentials_file_path }}
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
 
-    - name: Verify gcloud authentication and setup credentials file
+    # WIF produces an external-account credential file, which activate-service-account rejects —
+    # it only understands a service account key. `auth login --cred-file` accepts both, but the
+    # key path is left on activate-service-account so existing behaviour is untouched.
+    - name: Activate credentials
       shell: bash
       run: |
-        gcloud config set account ${{ inputs.service_account }}
+        if [[ -n "${{ inputs.workload_identity_provider }}" ]]; then
+          gcloud auth login --cred-file="${{ steps.auth-wif.outputs.credentials_file_path }}"
+        else
+          gcloud auth activate-service-account "${{ inputs.service_account }}" \
+            --key-file="${{ steps.auth-key.outputs.credentials_file_path }}"
+        fi
+
+        gcloud config set account "${{ inputs.service_account }}"
         gcloud auth list
         gcloud config list
 
+    # Only meaningful for the key path: a JSON key is a portable file that a build can consume.
+    # A WIF credential file references runner-local OIDC state and is useless outside this job.
+    - name: Export credentials file
+      if: inputs.gcp_credentials != ''
+      shell: bash
+      run: |
         echo "GCLOUD_CREDENTIALS_FILE_PATH=${{ inputs.credentials_file_path }}" >> $GITHUB_ENV
 
         mkdir -p $(dirname "${{ inputs.credentials_file_path }}")
-        cp ${{ steps.auth.outputs.credentials_file_path }} ${{ inputs.credentials_file_path }}
-
-    - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v2
+        cp "${{ steps.auth-key.outputs.credentials_file_path }}" "${{ inputs.credentials_file_path }}"
