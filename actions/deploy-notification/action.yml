@@ -1,0 +1,58 @@
+name: 'Deploy Notification'
+description: 'Posts the outcome of a deployment to Discord, including the deployed commit subject.'
+
+# Call with `if: always()` so failed deployments are reported too. The repository must be checked
+# out — the commit subject is read from the local git history.
+inputs:
+  webhook:
+    description: 'Discord webhook URL'
+    required: true
+  service:
+    description: 'Deployed service, used in the notification title'
+    required: true
+  stage:
+    description: 'Deployment stage'
+    required: true
+  status:
+    description: 'Job status — pass ${{ job.status }}'
+    required: true
+  version:
+    description: 'Deployed app version. Omitted from the notification when empty.'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Compose notification
+      id: compose
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        STAGE: ${{ inputs.stage }}
+      run: |
+        # Falls back to the SHA so a failure before checkout still produces a notification.
+        MESSAGE=$(git log -1 --pretty=%s 2>/dev/null || echo "$GITHUB_SHA")
+        echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+
+        {
+          echo 'description<<DESCRIPTION_EOF'
+          echo "**Stage:** \`$STAGE\`"
+          if [ -n "$VERSION" ]; then
+            echo "**Version:** \`$VERSION\`"
+          fi
+          echo "**Message:** $MESSAGE"
+          echo "**Commit:** \`$GITHUB_SHA\`"
+          echo 'DESCRIPTION_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - uses: sarisia/actions-status-discord@v1
+      with:
+        webhook: ${{ inputs.webhook }}
+        status: ${{ inputs.status }}
+        title: '[${{ inputs.service }}/${{ inputs.stage }}] ${{ steps.compose.outputs.message }}'
+        description: ${{ steps.compose.outputs.description }}
+        color: ${{ inputs.status == 'success' && '0x00ff00' || '0xff0000' }}
+        url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        username: Deployment Bot
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png

@@ -1,0 +1,41 @@
+name: 'Check Artifact Registry Image'
+description: >-
+  Reports whether an exact image tag already exists in Artifact Registry, so a stage that reuses a
+  previously built artifact can skip the build.
+
+# Requires an authenticated gcloud (see the gcp-auth action). Uses `images describe` — an exact-tag
+# lookup — rather than a `--filter` substring match, which would also match longer tags.
+inputs:
+  image:
+    description: 'Image path without tag, e.g. europe-west1-docker.pkg.dev/medconomy-shared/ar-medc/med-backend'
+    required: true
+  tag:
+    description: 'Tag to look up'
+    required: true
+
+outputs:
+  exists:
+    description: "'true' when image:tag is already in the registry"
+    value: ${{ steps.check.outputs.exists }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: check
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+      # Only a real NOT_FOUND counts as absent — a 403 or a transient error read as "missing" would
+      # rebuild and push over bytes that were already built and validated.
+      run: |
+        if DESCRIBE_OUTPUT=$(gcloud artifacts docker images describe "$IMAGE:$TAG" 2>&1); then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE:$TAG already exists — build can be skipped"
+        elif grep -qiE 'not found|NOT_FOUND' <<<"$DESCRIBE_OUTPUT"; then
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE:$TAG not found — build required"
+        else
+          echo "::error::$DESCRIBE_OUTPUT"
+          exit 1
+        fi

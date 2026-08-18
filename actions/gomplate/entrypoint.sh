@@ -37,7 +37,7 @@
 #   $6 - VALUES: Legacy YAML values for backwards compatibility (optional)
 #
 # USAGE (via GitHub Action):
-#   uses: unshoppable/actions/actions/gomplate@main
+#   uses: unshoppable/actions/actions/gomplate@master
 #   with:
 #     template: .github/config/my-app/gcp.yaml
 #     output: deployment.yaml

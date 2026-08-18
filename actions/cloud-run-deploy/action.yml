@@ -1,0 +1,76 @@
+name: 'Deploy to Cloud Run'
+description: 'Applies a Cloud Run service or job manifest and optionally opens the service to unauthenticated callers.'
+
+# Requires an authenticated gcloud (see the gcp-auth action) whose identity holds run.admin on the
+# target project. Render the manifest first — e.g. with the gomplate action.
+inputs:
+  manifest:
+    description: 'Path to the rendered Cloud Run manifest'
+    required: true
+  region:
+    description: 'Cloud Run region'
+    required: true
+  project_id:
+    description: 'Target GCP project'
+    required: true
+  kind:
+    description: "'service' or 'job'"
+    required: false
+    default: 'service'
+  allow_unauthenticated:
+    description: "Grant roles/run.invoker to allUsers. Services only; requires service_name."
+    required: false
+    default: 'false'
+  service_name:
+    description: 'Cloud Run service name, required when allow_unauthenticated is true'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        ALLOW_UNAUTHENTICATED: ${{ inputs.allow_unauthenticated }}
+        SERVICE_NAME: ${{ inputs.service_name }}
+      run: |
+        if [[ "$KIND" != "service" && "$KIND" != "job" ]]; then
+          echo "::error::kind must be 'service' or 'job', got '$KIND'"
+          exit 1
+        fi
+        if [[ "$ALLOW_UNAUTHENTICATED" == "true" && ( "$KIND" != "service" || -z "$SERVICE_NAME" ) ]]; then
+          echo "::error::allow_unauthenticated requires kind 'service' and a service_name"
+          exit 1
+        fi
+
+    - name: Print manifest
+      shell: bash
+      run: cat "${{ inputs.manifest }}"
+
+    - name: Apply manifest
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+        KIND: ${{ inputs.kind }}
+        REGION: ${{ inputs.region }}
+        PROJECT_ID: ${{ inputs.project_id }}
+      run: |
+        gcloud run "${KIND}s" replace "$MANIFEST" \
+          --region="$REGION" \
+          --project="$PROJECT_ID"
+
+    - name: Allow unauthenticated access
+      if: inputs.allow_unauthenticated == 'true'
+      shell: bash
+      env:
+        SERVICE_NAME: ${{ inputs.service_name }}
+        REGION: ${{ inputs.region }}
+        PROJECT_ID: ${{ inputs.project_id }}
+      run: |
+        gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
+          --member="allUsers" \
+          --role="roles/run.invoker" \
+          --region="$REGION" \
+          --project="$PROJECT_ID"

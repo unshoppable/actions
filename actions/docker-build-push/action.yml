@@ -1,0 +1,83 @@
+name: 'Build and Push Docker Image'
+description: 'Builds a Docker image and pushes it to Artifact Registry under one or more tags.'
+
+# Plain docker rather than push-to-gcr, whose registry/project_id split cannot express an Artifact
+# Registry path. Requires an authenticated gcloud (see the gcp-auth action); the docker credential
+# helper is configured here from the registry host in `image`.
+inputs:
+  image:
+    description: 'Image path without tag, e.g. europe-west1-docker.pkg.dev/medconomy-shared/ar-medc/med-backend'
+    required: true
+  tags:
+    description: 'Tags to build and push, comma- or newline-separated'
+    required: true
+  dockerfile:
+    description: 'Path to the Dockerfile'
+    required: false
+    default: './Dockerfile'
+  context:
+    description: 'Build context'
+    required: false
+    default: '.'
+  build_args:
+    description: 'Build arguments as KEY=VALUE, one per line'
+    required: false
+    default: ''
+
+outputs:
+  image_ref:
+    description: 'Fully qualified reference of the first tag'
+    value: ${{ steps.build.outputs.image_ref }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Configure Docker for the registry
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
+
+    - name: Build and push
+      id: build
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAGS: ${{ inputs.tags }}
+        DOCKERFILE: ${{ inputs.dockerfile }}
+        CONTEXT: ${{ inputs.context }}
+        BUILD_ARGS: ${{ inputs.build_args }}
+      run: |
+        TAG_LIST=()
+        while IFS= read -r tag; do
+          tag="${tag//[[:space:]]/}"
+          if [ -n "$tag" ]; then
+            TAG_LIST+=("$tag")
+          fi
+        done < <(echo "$TAGS" | tr ',' '\n')
+
+        if [ ${#TAG_LIST[@]} -eq 0 ]; then
+          echo "::error::no tags given"
+          exit 1
+        fi
+
+        BUILD_FLAGS=()
+        for tag in "${TAG_LIST[@]}"; do
+          BUILD_FLAGS+=(--tag "$IMAGE:$tag")
+        done
+        while IFS= read -r build_arg; do
+          if [ -n "$build_arg" ]; then
+            BUILD_FLAGS+=(--build-arg "$build_arg")
+          fi
+        done <<< "$BUILD_ARGS"
+
+        docker build \
+          --file "$DOCKERFILE" \
+          "${BUILD_FLAGS[@]}" \
+          "$CONTEXT"
+
+        for tag in "${TAG_LIST[@]}"; do
+          docker push "$IMAGE:$tag"
+        done
+
+        echo "image_ref=$IMAGE:${TAG_LIST[0]}" >> "$GITHUB_OUTPUT"

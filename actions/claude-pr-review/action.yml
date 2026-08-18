@@ -1,0 +1,138 @@
+name: 'Dr. Claude PR Review'
+description: >-
+  Runs the Dr. Claude review agent on a pull request, archives its tool stream, and fails the job
+  when the run ended without a review comment.
+
+# The repository must already be checked out (the caller decides fetch-depth / ref / LFS).
+# Secrets the agent needs beyond github_token (e.g. MCP server tokens) must be exported as
+# job-level `env:` by the caller — a composite action cannot forward arbitrary environment.
+inputs:
+  pr_number:
+    description: 'Pull request number under review'
+    required: true
+  claude_code_oauth_token:
+    description: 'OAuth token for the Claude Code action'
+    required: true
+  github_token:
+    description: 'Token the agent uses for gh CLI and the posted-comment check'
+    required: true
+  prompt:
+    description: 'Repository-specific prompt handed to the agent'
+    required: true
+  base_branch:
+    description: 'Branch the pull request targets'
+    required: false
+    default: 'master'
+  model:
+    description: 'Model the agent runs on'
+    required: false
+    default: 'claude-opus-5'
+  effort:
+    description: 'Reasoning effort'
+    required: false
+    default: 'max'
+  allowed_tools:
+    description: 'Overrides the default --allowed-tools list. Read-only gh commands plus WebSearch.'
+    required: false
+    default: 'Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),WebSearch(*)'
+  extra_claude_args:
+    description: 'Additional claude_args lines (e.g. --mcp-config, --disallowed-tools), one per line'
+    required: false
+    default: ''
+  use_sticky_comment:
+    description: 'Let the Claude Code action overwrite its own tracking comment instead of stacking new ones'
+    required: false
+    default: 'true'
+  allowed_bots:
+    description: 'Bots whose comments the agent may read'
+    required: false
+    default: 'dr-claude-bot[bot]'
+  verify_marker:
+    description: >-
+      HTML marker the review comment must carry. When set, the job fails if no bot comment
+      containing it appeared since the run started. Empty disables the check.
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    # Bounds the posted-comment check below to comments this run produced.
+    - name: Record review start time
+      id: start
+      shell: bash
+      run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+    # The static half of claude_args is identical across repositories and lives in claude-args.txt;
+    # only the tool lists and per-repo flags come in as inputs.
+    - name: Compose claude args
+      id: args
+      shell: bash
+      env:
+        MODEL: ${{ inputs.model }}
+        EFFORT: ${{ inputs.effort }}
+        ALLOWED_TOOLS: ${{ inputs.allowed_tools }}
+        EXTRA_ARGS: ${{ inputs.extra_claude_args }}
+      run: |
+        {
+          echo 'value<<CLAUDE_ARGS_EOF'
+          echo "--model $MODEL"
+          echo "--effort $EFFORT"
+          echo "--allowed-tools \"$ALLOWED_TOOLS\""
+          cat "$GITHUB_ACTION_PATH/claude-args.txt"
+          if [ -n "$EXTRA_ARGS" ]; then
+            echo "$EXTRA_ARGS"
+          fi
+          echo 'CLAUDE_ARGS_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run Dr. Claude
+      uses: anthropics/claude-code-action@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        github_token: ${{ inputs.github_token }}
+        base_branch: ${{ inputs.base_branch }}
+        use_sticky_comment: ${{ inputs.use_sticky_comment }}
+        allowed_bots: ${{ inputs.allowed_bots }}
+        additional_permissions: |
+          actions: read
+        claude_args: ${{ steps.args.outputs.value }}
+        prompt: ${{ inputs.prompt }}
+
+    # The full tool stream is the only record of what the agent actually did (and of a review it may
+    # have produced but failed to post) — without it, a run that ends without a PR comment cannot be
+    # diagnosed.
+    - name: Upload Claude execution log
+      if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: claude-execution-output
+        path: ${{ runner.temp }}/claude-execution-output.json
+        retention-days: 7
+        if-no-files-found: ignore
+
+    # The agent can finish "successfully" without ever posting the review (e.g. by ending its turn
+    # while subagents are still running). A missing review must fail the job instead of leaving a
+    # green check and no comment. Matching on user.type rather than a fixed login keeps the check
+    # working when the repository swaps GITHUB_TOKEN for an App token; the marker is what narrows it
+    # to the actual review comment.
+    - name: Verify review comment was posted
+      if: always() && inputs.verify_marker != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        REVIEW_STARTED_AT: ${{ steps.start.outputs.at }}
+        MARKER: ${{ inputs.verify_marker }}
+      run: |
+        : "${PR_NUMBER:?}" "${REVIEW_STARTED_AT:?}"
+
+        COMMENT_COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?since=${REVIEW_STARTED_AT}" --paginate \
+          --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${MARKER}\"))) | .id" | wc -l)
+
+        if [ "${COMMENT_COUNT}" -eq 0 ]; then
+          echo "::error::Claude finished without posting a review comment on PR #${PR_NUMBER}. Check the claude-execution-output artifact for what the agent actually did."
+          exit 1
+        fi
