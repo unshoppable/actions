@@ -2,7 +2,8 @@ name: 'GCP Stage Configuration'
 
 description: >
   Maps a deployment stage to the medconomy GCP project and exports PROJECT_ID, PROJECT_NUMBER,
-  SERVICE_ACCOUNT, DEPLOY_SERVICE_ACCOUNT and WORKLOAD_IDENTITY_PROVIDER to the job environment.
+  PROJECT_HASH, SERVICE_ACCOUNT, DEPLOY_SERVICE_ACCOUNT and WORKLOAD_IDENTITY_PROVIDER to the job
+  environment.
 
 inputs:
   stage:
@@ -18,14 +19,19 @@ runs:
       run: |
         # No catch-all: an unrecognised stage must fail loudly rather than land in staging while
         # the environment gate, the target project and any deploy notification say something else.
+        # PROJECT_HASH is the random suffix in the project's legacy Cloud Run URLs
+        # (<service>-<hash>-ew.a.run.app). runsd needs it as CLOUD_RUN_PROJECT_HASH to resolve
+        # in-project service names; it is not derivable from the metadata server.
         case "$STAGE" in
           prod)
             PROJECT_ID=medconomy-prod
             PROJECT_NUMBER=49414782973
+            PROJECT_HASH=srrr5gxtuq
             ;;
           staging)
             PROJECT_ID=medconomy-staging
             PROJECT_NUMBER=398880259287
+            PROJECT_HASH=wszjhacuaq
             ;;
           *)
             echo "::error::unknown stage '$STAGE' - refusing to deploy"
@@ -41,6 +47,7 @@ runs:
         {
           echo "PROJECT_ID=$PROJECT_ID"
           echo "PROJECT_NUMBER=$PROJECT_NUMBER"
+          echo "PROJECT_HASH=$PROJECT_HASH"
           echo "SERVICE_ACCOUNT=$SERVICE_ACCOUNT"
           echo "DEPLOY_SERVICE_ACCOUNT=$DEPLOY_SERVICE_ACCOUNT"
           echo "WORKLOAD_IDENTITY_PROVIDER=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/pool-github/providers/provider-github"
