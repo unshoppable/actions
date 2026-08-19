@@ -7,14 +7,27 @@ runs:
   steps:
     - uses: volta-cli/action@v5
 
+    # Exact-key only, no restore-keys: `npm ci` deletes node_modules before
+    # installing, so restoring a stale multi-GB cache on a miss is pure wasted
+    # download/extract time.
     - name: Cache node modules
       id: cache-modules
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: node_modules
         key: ${{ runner.os }}-modules-${{ hashFiles('package-lock.json', 'patches/**') }}
+
+    # The npm cache dir is content-addressed, so a stale restore is useful here —
+    # only packages new to the lockfile get fetched from the registry. This is the
+    # cache that keeps the miss path fast.
+    - name: Cache npm cache
+      if: steps.cache-modules.outputs.cache-hit != 'true'
+      uses: actions/cache@v6
+      with:
+        path: ~/.npm
+        key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
         restore-keys: |
-          ${{ runner.os }}-modules-
+          ${{ runner.os }}-npm-
 
     - name: Install dependencies
       if: steps.cache-modules.outputs.cache-hit != 'true'
@@ -25,7 +38,7 @@ runs:
       # because the binary is no longer busy on the next pass.
       run: |
         for attempt in 1 2 3; do
-          if NODE_ENV=development npm ci --include=dev --audit=false; then
+          if NODE_ENV=development npm ci --include=dev --audit=false --prefer-offline; then
             exit 0
           fi
           echo "::warning::npm ci failed (attempt ${attempt}/3) — retrying in 5s"

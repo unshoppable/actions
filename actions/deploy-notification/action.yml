@@ -14,7 +14,7 @@ inputs:
     description: 'Deployment stage'
     required: true
   status:
-    description: 'Job status — pass ${{ job.status }}'
+    description: 'Job status — pass "job.status" as an expression from the calling workflow'
     required: true
   version:
     description: 'Deployed app version. Omitted from the notification when empty.'
