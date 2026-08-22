@@ -46,7 +46,7 @@ runs:
     - name: Authenticate to Google Cloud (Workload Identity Federation)
       id: auth-wif
       if: inputs.workload_identity_provider != ''
-      uses: google-github-actions/auth@v2
+      uses: google-github-actions/auth@v3
       with:
         workload_identity_provider: ${{ inputs.workload_identity_provider }}
         service_account: ${{ inputs.service_account }}
@@ -54,12 +54,12 @@ runs:
     - name: Authenticate to Google Cloud (service account key)
       id: auth-key
       if: inputs.gcp_credentials != ''
-      uses: google-github-actions/auth@v2
+      uses: google-github-actions/auth@v3
       with:
         credentials_json: ${{ inputs.gcp_credentials }}
 
     - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v2
+      uses: google-github-actions/setup-gcloud@v3
 
     # WIF produces an external-account credential file, which activate-service-account rejects —
     # it only understands a service account key. `auth login --cred-file` accepts both, but the
