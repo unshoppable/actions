@@ -103,12 +103,13 @@ runs:
 
     # The full tool stream is the only record of what the agent actually did (and of a review it may
     # have produced but failed to post) — without it, a run that ends without a PR comment cannot be
-    # diagnosed.
+    # diagnosed. One artifact per model, so a job that retries the review with another model keeps
+    # the log of every attempt.
     - name: Upload Claude execution log
       if: always()
       uses: actions/upload-artifact@v5
       with:
-        name: claude-execution-output
+        name: claude-execution-output-${{ inputs.model }}
         path: ${{ runner.temp }}/claude-execution-output.json
         retention-days: 7
         if-no-files-found: ignore
@@ -126,6 +127,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr_number }}
         REVIEW_STARTED_AT: ${{ steps.start.outputs.at }}
         MARKER: ${{ inputs.verify_marker }}
+        MODEL: ${{ inputs.model }}
       run: |
         : "${PR_NUMBER:?}" "${REVIEW_STARTED_AT:?}"
 
@@ -133,6 +135,6 @@ runs:
           --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${MARKER}\"))) | .id" | wc -l)
 
         if [ "${COMMENT_COUNT}" -eq 0 ]; then
-          echo "::error::Claude finished without posting a review comment on PR #${PR_NUMBER}. Check the claude-execution-output artifact for what the agent actually did."
+          echo "::error::Claude finished without posting a review comment on PR #${PR_NUMBER}. Check the claude-execution-output-${MODEL} artifact for what the agent actually did."
           exit 1
         fi
