@@ -46,7 +46,7 @@ inputs:
   allowed_bots:
     description: 'Bots whose comments the agent may read'
     required: false
-    default: 'dr-claude-bot[bot]'
+    default: ''
   verify_marker:
     description: >-
       HTML marker the review comment must carry. When set, the job fails if no bot comment
